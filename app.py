@@ -62,7 +62,7 @@ if "portfolio_symbols" not in st.session_state:
     st.session_state.portfolio_symbols = load_portfolio()
 
 st.title("📊 My NSE Portfolio")
-st.caption("A simple watchlist dashboard for your selected NSE stocks.")
+st.caption("Your personal NSE watchlist with frequent price updates and movement highlighting.")
 
 with st.sidebar:
     st.header("Manage portfolio")
@@ -115,9 +115,9 @@ with st.sidebar:
 
     st.divider()
     refresh_seconds = st.selectbox(
-        "Auto-refresh prices",
-        [0, 30, 60, 120, 300],
-        index=2,
+        "Live price check",
+        [0, 10, 15, 30, 60],
+        index=1,
         format_func=lambda value: "Off" if value == 0 else f"Every {value} seconds",
     )
     refresh_now = st.button("↻ Refresh prices now", use_container_width=True)
@@ -131,13 +131,13 @@ if refresh_seconds:
         st.sidebar.warning("Install streamlit-autorefresh to enable automatic refresh.")
 
 
-@st.cache_data(ttl=25, show_spinner=False)
+@st.cache_data(ttl=8, show_spinner=False)
 def fetch_stock_history(symbol):
     ticker = symbol + ".NS"
     data = yf.download(
         ticker,
         period="5d",
-        interval="5m",
+        interval="1m",
         progress=False,
         auto_adjust=False,
         threads=False,
@@ -234,6 +234,31 @@ portfolio = pd.DataFrame(rows)
 valid = portfolio[portfolio["Status"] == "OK"].copy()
 last_updated = datetime.now(IST).strftime("%d %b %Y, %I:%M:%S %p IST")
 
+# Compare each latest price with the previous app refresh to show the direction
+# of the most recent observed move (rather than only today's gain/loss).
+if "previous_live_prices" not in st.session_state:
+    st.session_state.previous_live_prices = {}
+
+movement_labels = {}
+for row in rows:
+    symbol = row["Symbol"]
+    price = row["Last Price"]
+    previous_price = st.session_state.previous_live_prices.get(symbol)
+    if price is None or pd.isna(price):
+        movement_labels[symbol] = "—"
+    elif previous_price is None:
+        movement_labels[symbol] = "•"
+    elif price > previous_price:
+        movement_labels[symbol] = "▲ UP"
+    elif price < previous_price:
+        movement_labels[symbol] = "▼ DOWN"
+    else:
+        movement_labels[symbol] = "—"
+portfolio["Move"] = portfolio["Symbol"].map(movement_labels)
+for row in rows:
+    if row["Last Price"] is not None and pd.notna(row["Last Price"]):
+        st.session_state.previous_live_prices[row["Symbol"]] = row["Last Price"]
+
 total_stocks = len(symbols)
 available_stocks = len(valid)
 advancers = int((valid["Change"] > 0).sum()) if not valid.empty else 0
@@ -246,15 +271,25 @@ metric3.metric("Advancers", advancers)
 metric4.metric("Decliners", decliners)
 
 st.subheader("Portfolio overview")
-st.caption(f"Last dashboard refresh: {last_updated}")
+st.caption(f"Last price check: {last_updated} · Data refreshes from Yahoo Finance; price candles are 1-minute data.")
 
 display_columns = [
     "Symbol", "Open", "High", "Low", "Last Price",
     "Previous Close", "Change", "Change %", "Volume",
-    "Last Updated (IST)", "Status",
+    "Last Updated (IST)", "Move", "Status",
 ]
+def movement_row_style(row):
+    direction = row.get("Move", "—")
+    if direction == "▲ UP":
+        return ["background-color: #d9fbe5; color: #14532d;"] * len(row)
+    if direction == "▼ DOWN":
+        return ["background-color: #fee2e2; color: #7f1d1d;"] * len(row)
+    return [""] * len(row)
+
+
+styled_portfolio = portfolio[display_columns].style.apply(movement_row_style, axis=1)
 st.dataframe(
-    portfolio[display_columns],
+    styled_portfolio,
     use_container_width=True,
     hide_index=True,
     column_config={
@@ -280,7 +315,7 @@ if not valid.empty:
         st.line_chart(chart_day["Close"], height=280, use_container_width=True)
 
 st.caption(
-    "Prices and OHLC values are based on Yahoo Finance 5-minute candles. "
-    "They may be delayed, incomplete, or unavailable and are not guaranteed tick-by-tick NSE prices. "
+    "Prices and OHLC values are based on Yahoo Finance 1-minute candles, checked on the selected refresh interval. "
+    "Yahoo Finance is not a guaranteed live NSE tick feed; prices may be delayed, incomplete, or throttled. "
     "This dashboard is for tracking only; verify prices with your broker before trading."
 )
