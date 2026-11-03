@@ -232,6 +232,140 @@ with st.spinner("Fetching the latest available prices for your portfolio…"):
 
 portfolio = pd.DataFrame(rows)
 valid = portfolio[portfolio["Status"] == "OK"].copy()
+
+# Rank only positive stocks as gainers and negative stocks as losers.
+# A group signal requires exactly three ranked stocks and all three must qualify.
+valid["Change %"] = pd.to_numeric(valid["Change %"], errors="coerce")
+valid["High"] = pd.to_numeric(valid["High"], errors="coerce")
+valid["Low"] = pd.to_numeric(valid["Low"], errors="coerce")
+valid["Last Price"] = pd.to_numeric(valid["Last Price"], errors="coerce")
+
+gainers = valid[valid["Change %"] > 0].nlargest(3, "Change %").copy()
+losers = valid[valid["Change %"] < 0].nsmallest(3, "Change %").copy()
+
+if not gainers.empty:
+    gainers["Below High %"] = ((gainers["High"] - gainers["Last Price"]) / gainers["High"]) * 100
+if not losers.empty:
+    losers["Above Low %"] = ((losers["Last Price"] - losers["Low"]) / losers["Low"]) * 100
+
+buy_signal = len(gainers) == 3 and bool((gainers["Below High %"] >= 0.50).all())
+sell_signal = len(losers) == 3 and bool((losers["Above Low %"] >= 0.50).all())
+
+# Alert only when a complete three-stock group first becomes true.
+if "previous_group_signals" not in st.session_state:
+    st.session_state.previous_group_signals = {"BUY": False, "SELL": False}
+if "alert_trigger_id" not in st.session_state:
+    st.session_state.alert_trigger_id = 0
+
+new_alerts = []
+if buy_signal and not st.session_state.previous_group_signals["BUY"]:
+    new_alerts.append("BUY")
+if sell_signal and not st.session_state.previous_group_signals["SELL"]:
+    new_alerts.append("SELL")
+if new_alerts:
+    st.session_state.alert_trigger_id += 1
+st.session_state.previous_group_signals = {"BUY": buy_signal, "SELL": sell_signal}
+
+st.subheader("🔔 Three-stock group alerts")
+buy_col, sell_col = st.columns(2)
+with buy_col:
+    if buy_signal:
+        st.success("🟢 BUY SIGNAL — all top 3 gainers are at least 0.50% below their day highs.")
+    else:
+        st.info("BUY alarm OFF — all 3 top gainers have not met the condition.")
+with sell_col:
+    if sell_signal:
+        st.error("🔴 SELL SIGNAL — all bottom 3 losers are at least 0.50% above their day lows.")
+    else:
+        st.info("SELL alarm OFF — all 3 bottom losers have not met the condition.")
+
+detail_col1, detail_col2 = st.columns(2)
+with detail_col1:
+    st.markdown("**Top 3 % gainers — BUY group**")
+    if len(gainers) == 3:
+        st.dataframe(
+            gainers[["Symbol", "Change %", "High", "Last Price", "Below High %"]].style.format(
+                {"Change %": "{:.2f}%", "High": "₹{:.2f}", "Last Price": "₹{:.2f}", "Below High %": "{:.2f}%"}
+            ),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption("All three must show Below High % ≥ 0.50% to activate BUY.")
+    else:
+        st.caption(f"Need 3 positive % gainers; currently found {len(gainers)}.")
+
+with detail_col2:
+    st.markdown("**Bottom 3 % losers — SELL group**")
+    if len(losers) == 3:
+        st.dataframe(
+            losers[["Symbol", "Change %", "Low", "Last Price", "Above Low %"]].style.format(
+                {"Change %": "{:.2f}%", "Low": "₹{:.2f}", "Last Price": "₹{:.2f}", "Above Low %": "{:.2f}%"}
+            ),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption("All three must show Above Low % ≥ 0.50% to activate SELL.")
+    else:
+        st.caption(f"Need 3 negative % losers; currently found {len(losers)}.")
+
+# Browser sound is enabled by the user's click inside the sound control.
+# Browsers may block automatic audio until the user explicitly enables it.
+import streamlit.components.v1 as components
+sound_trigger = st.session_state.alert_trigger_id
+any_signal_active = buy_signal or sell_signal
+sound_html = """
+<div style="font-family: sans-serif; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+  <button id="sound-enable" style="padding:9px 14px;border:1px solid #888;border-radius:8px;background:#f3f4f6;color:#111;cursor:pointer;">
+    Enable sound alarm
+  </button>
+  <span id="sound-status" style="font-size:13px;color:inherit;">Sound is off until enabled.</span>
+</div>
+<script>
+(() => {
+  const key = "nse_portfolio_sound_enabled";
+  const trigger = Number("__TRIGGER__");
+  const active = "__ACTIVE__" === "true";
+  let audioContext;
+  function beep() {
+    try {
+      audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioContext.state === "suspended") audioContext.resume();
+      const now = audioContext.currentTime;
+      [0, 0.28, 0.56].forEach((offset, index) => {
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = index === 1 ? 880 : 660;
+        gain.gain.setValueAtTime(0.0001, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.22, now + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.18);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(now + offset);
+        oscillator.stop(now + offset + 0.2);
+      });
+    } catch (e) {}
+  }
+  const button = document.getElementById("sound-enable");
+  const status = document.getElementById("sound-status");
+  if (localStorage.getItem(key) === "1") {
+    button.textContent = "Sound enabled";
+    status.textContent = "Sound alarm is enabled in this browser.";
+    if (trigger > 0 && localStorage.getItem("nse_portfolio_last_sound_trigger") !== String(trigger)) {
+      localStorage.setItem("nse_portfolio_last_sound_trigger", String(trigger));
+      if (active) beep();
+    }
+  }
+  button.addEventListener("click", () => {
+    localStorage.setItem(key, "1");
+    button.textContent = "Sound enabled";
+    status.textContent = "Sound alarm enabled.";
+    if (active) beep();
+  });
+})();
+</script>
+""".replace("__TRIGGER__", str(sound_trigger)).replace("__ACTIVE__", str(any_signal_active).lower())
+components.html(sound_html, height=48)
+st.caption("Keep this dashboard open for alarms. Sound may require browser permission; alarms trigger once when a group first qualifies, not on every refresh.")
+
 last_updated = datetime.now(IST).strftime("%d %b %Y, %I:%M:%S %p IST")
 
 # Compare each latest price with the previous app refresh to show the direction
