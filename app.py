@@ -241,6 +241,13 @@ except Exception as exc:
     st.info("Check your internet connection. The list is fetched from the official Nifty Indices constituent CSV.")
     st.stop()
 
+if "custom_watchlist" not in st.session_state:
+    try:
+        with open(WATCHLIST_FILE, "r", encoding="utf-8") as file:
+            st.session_state.custom_watchlist = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        st.session_state.custom_watchlist = []
+
 custom_symbols = st.session_state.get("custom_watchlist", [])
 if custom_symbols:
     extra = pd.DataFrame([{"Symbol": s, "Company": "My watchlist", "Ticker": s + ".NS"} for s in custom_symbols if s + ".NS" not in set(constituents["Ticker"])])
@@ -252,13 +259,6 @@ st.info(
     "The 1-hour bars are constructed from today's 5-minute candles, aligned to the NSE 09:15 session open. "
     "A signal appears only when all three stages are true."
 )
-
-if "custom_watchlist" not in st.session_state:
-    try:
-        with open(WATCHLIST_FILE, "r", encoding="utf-8") as file:
-            st.session_state.custom_watchlist = json.load(file)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        st.session_state.custom_watchlist = []
 
 if "scan_results" not in st.session_state:
     st.session_state.scan_results = []
