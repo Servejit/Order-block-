@@ -1,9 +1,11 @@
+import base64
 import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 import streamlit as st
 import yfinance as yf
 
@@ -35,16 +37,59 @@ div[data-testid="stDataFrame"] {
 """, unsafe_allow_html=True)
 
 
+GITHUB_REPO = "Servejit/Order-block-"
+GITHUB_BRANCH = "main"
+GITHUB_PORTFOLIO_API = f"https://api.github.com/repos/{GITHUB_REPO}/contents/portfolio.json"
+
+
+def get_github_token():
+    try:
+        return st.secrets.get("GITHUB_TOKEN", "")
+    except Exception:
+        return ""
+
+
+def clean_symbols(data):
+    if not isinstance(data, list):
+        return None
+    cleaned = []
+    for value in data:
+        symbol = str(value).strip().upper().replace(".NS", "")
+        if symbol and symbol not in cleaned:
+            cleaned.append(symbol)
+    return cleaned
+
+
 def load_portfolio():
+    # Read the committed GitHub file first so stocks survive Streamlit restarts,
+    # browser reloads, and temporary cloud-container replacement.
+    token = get_github_token()
+    if token:
+        try:
+            response = requests.get(
+                GITHUB_PORTFOLIO_API,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                params={"ref": GITHUB_BRANCH},
+                timeout=15,
+            )
+            response.raise_for_status()
+            remote_data = json.loads(base64.b64decode(response.json()["content"]).decode("utf-8"))
+            remote_symbols = clean_symbols(remote_data)
+            if remote_symbols is not None:
+                PORTFOLIO_FILE.write_text(json.dumps(remote_symbols, indent=2), encoding="utf-8")
+                return remote_symbols
+        except Exception as error:
+            st.warning(f"Could not load the saved GitHub portfolio; using local backup. ({error})")
+
     try:
         if PORTFOLIO_FILE.exists():
             data = json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                cleaned = []
-                for value in data:
-                    symbol = str(value).strip().upper().replace(".NS", "")
-                    if symbol and symbol not in cleaned:
-                        cleaned.append(symbol)
+            cleaned = clean_symbols(data)
+            if cleaned is not None:
                 return cleaned
     except (OSError, json.JSONDecodeError, TypeError):
         pass
@@ -52,10 +97,44 @@ def load_portfolio():
 
 
 def save_portfolio(symbols):
-    PORTFOLIO_FILE.write_text(
-        json.dumps(symbols, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps(symbols, indent=2)
+    PORTFOLIO_FILE.write_text(payload, encoding="utf-8")
+
+    token = get_github_token()
+    if not token:
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        current = requests.get(
+            GITHUB_PORTFOLIO_API,
+            headers=headers,
+            params={"ref": GITHUB_BRANCH},
+            timeout=15,
+        )
+        current.raise_for_status()
+        current_sha = current.json()["sha"]
+        encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+        update = requests.put(
+            GITHUB_PORTFOLIO_API,
+            headers=headers,
+            json={
+                "message": "Update saved NSE portfolio",
+                "content": encoded,
+                "sha": current_sha,
+                "branch": GITHUB_BRANCH,
+            },
+            timeout=20,
+        )
+        update.raise_for_status()
+        return True
+    except Exception as error:
+        st.error(f"Portfolio changed in this session, but GitHub could not save it permanently: {error}")
+        return False
 
 
 if "portfolio_symbols" not in st.session_state:
@@ -95,8 +174,12 @@ with st.sidebar:
                     additions.append(symbol)
         if additions:
             st.session_state.portfolio_symbols = existing
-            save_portfolio(existing)
+            saved_to_github = save_portfolio(existing)
             st.success("Added: " + ", ".join(additions))
+            if saved_to_github:
+                st.caption("Portfolio saved permanently to GitHub.")
+            else:
+                st.warning("Saved in the current app session only. Add the GitHub secret described below to preserve stocks across app restarts.")
         elif stock_input.strip():
             st.info("No new valid symbols to add.")
 
@@ -116,7 +199,9 @@ with st.sidebar:
         ):
             updated = [s for s in current_symbols if s != remove_choice]
             st.session_state.portfolio_symbols = updated
-            save_portfolio(updated)
+            saved_to_github = save_portfolio(updated)
+            if not saved_to_github and get_github_token():
+                st.warning("The removal could not be saved permanently to GitHub.")
             st.rerun()
 
         if st.button(
@@ -125,7 +210,9 @@ with st.sidebar:
             type="secondary",
         ):
             st.session_state.portfolio_symbols = []
-            save_portfolio([])
+            saved_to_github = save_portfolio([])
+            if not saved_to_github and get_github_token():
+                st.warning("The empty portfolio could not be saved permanently to GitHub.")
             st.session_state.previous_live_prices = {}
             st.session_state.previous_group_signals = {"BUY": False, "SELL": False}
             st.rerun()
