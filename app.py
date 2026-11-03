@@ -376,6 +376,38 @@ if new_alerts:
 st.session_state.previous_group_signals = {"BUY": buy_signal, "SELL": sell_signal}
 
 st.subheader("🔔 Three-stock group alerts")
+
+# In-app alarm controls. These affect sound only; signal calculations and
+# the manually maintained portfolio are not changed.
+if "master_alarm_enabled" not in st.session_state:
+    st.session_state.master_alarm_enabled = True
+if "buy_alarm_enabled" not in st.session_state:
+    st.session_state.buy_alarm_enabled = True
+if "sell_alarm_enabled" not in st.session_state:
+    st.session_state.sell_alarm_enabled = True
+
+alarm_master_col, alarm_buy_col, alarm_sell_col = st.columns(3)
+with alarm_master_col:
+    st.session_state.master_alarm_enabled = st.toggle(
+        "Master alarm", value=st.session_state.master_alarm_enabled,
+        key="master_alarm_toggle",
+        help="Turn all in-app sound alarms on or off."
+    )
+with alarm_buy_col:
+    st.session_state.buy_alarm_enabled = st.toggle(
+        "BUY alarm", value=st.session_state.buy_alarm_enabled,
+        key="buy_alarm_toggle",
+        disabled=not st.session_state.master_alarm_enabled,
+        help="Enable or disable BUY sound independently."
+    )
+with alarm_sell_col:
+    st.session_state.sell_alarm_enabled = st.toggle(
+        "SELL alarm", value=st.session_state.sell_alarm_enabled,
+        key="sell_alarm_toggle",
+        disabled=not st.session_state.master_alarm_enabled,
+        help="Enable or disable SELL sound independently."
+    )
+
 buy_col, sell_col = st.columns(2)
 with buy_col:
     if buy_signal:
@@ -419,8 +451,18 @@ with detail_col2:
 # Browsers may block automatic audio until the user explicitly enables it.
 import streamlit.components.v1 as components
 sound_trigger = st.session_state.alert_trigger_id
-any_signal_active = buy_signal or sell_signal
+master_alarm_enabled = st.session_state.master_alarm_enabled
+buy_alarm_enabled = st.session_state.buy_alarm_enabled
+sell_alarm_enabled = st.session_state.sell_alarm_enabled
+any_signal_active = (
+    master_alarm_enabled
+    and ((buy_signal and buy_alarm_enabled) or (sell_signal and sell_alarm_enabled))
+)
 last_alert_type = st.session_state.get("last_alert_type", "BUY")
+if last_alert_type == "BUY" and not buy_alarm_enabled:
+    last_alert_type = "SELL"
+elif last_alert_type == "SELL" and not sell_alarm_enabled:
+    last_alert_type = "BUY"
 sound_html = """
 <div style="font-family: sans-serif; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
   <button id="sound-enable" style="padding:9px 14px;border:1px solid #888;border-radius:8px;background:#f3f4f6;color:#111;cursor:pointer;">
