@@ -142,6 +142,7 @@ if "portfolio_symbols" not in st.session_state:
 
 st.title("📊 My NSE Portfolio")
 st.caption("Your personal NSE watchlist with frequent price updates and movement highlighting.")
+st.info("🔒 Fixed manual portfolio: stocks stay in this list during refreshes and ranking changes. Only your Add, Remove selected, or Remove ALL actions can change the list. A stock with unavailable price data is kept in the portfolio.")
 
 with st.sidebar:
     st.header("Manage portfolio")
@@ -322,7 +323,10 @@ def build_portfolio_row(symbol):
         }
 
 
-symbols = st.session_state.portfolio_symbols
+# The portfolio is deliberately independent of live prices and rankings.
+# Never derive, replace, or prune this list from gainers/losers or data availability.
+# It changes only in the explicit Add / Remove controls above.
+symbols = list(st.session_state.portfolio_symbols)
 
 if not symbols:
     st.info("Your portfolio is empty. Add NSE symbols from the sidebar to get started.")
