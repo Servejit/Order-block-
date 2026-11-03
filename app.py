@@ -281,6 +281,7 @@ if sell_signal and not st.session_state.previous_group_signals["SELL"]:
     new_alerts.append("SELL")
 if new_alerts:
     st.session_state.alert_trigger_id += 1
+    st.session_state.last_alert_type = new_alerts[-1]
 st.session_state.previous_group_signals = {"BUY": buy_signal, "SELL": sell_signal}
 
 st.subheader("🔔 Three-stock group alerts")
@@ -328,6 +329,7 @@ with detail_col2:
 import streamlit.components.v1 as components
 sound_trigger = st.session_state.alert_trigger_id
 any_signal_active = buy_signal or sell_signal
+last_alert_type = st.session_state.get("last_alert_type", "BUY")
 sound_html = """
 <div style="font-family: sans-serif; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
   <button id="sound-enable" style="padding:9px 14px;border:1px solid #888;border-radius:8px;background:#f3f4f6;color:#111;cursor:pointer;">
@@ -339,6 +341,7 @@ sound_html = """
 (() => {
   const key = "nse_portfolio_sound_enabled";
   const trigger = Number("__TRIGGER__");
+  window.__NSE_ALERT_TYPE__ = "__ALERT_TYPE__";
   const active = "__ACTIVE__" === "true";
   let audioContext;
   function beep() {
@@ -346,18 +349,27 @@ sound_html = """
       audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
       if (audioContext.state === "suspended") audioContext.resume();
       const now = audioContext.currentTime;
-      [0, 0.28, 0.56].forEach((offset, index) => {
-        const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        oscillator.type = "sine";
-        oscillator.frequency.value = index === 1 ? 880 : 660;
-        gain.gain.setValueAtTime(0.0001, now + offset);
-        gain.gain.exponentialRampToValueAtTime(0.22, now + offset + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.18);
-        oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        oscillator.start(now + offset);
-        oscillator.stop(now + offset + 0.2);
+      // Soft piano-like pluck: rounded fundamental, quiet upper harmonic,
+      // gentle attack and natural decay. BUY rises; SELL falls.
+      const notes = window.__NSE_ALERT_TYPE__ === "SELL"
+        ? [783.99, 659.25, 523.25]
+        : [523.25, 659.25, 783.99];
+      notes.forEach((frequency, index) => {
+        const start = now + index * 0.22;
+        [1, 2.01].forEach((partial, partialIndex) => {
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(frequency * partial, start);
+          const peak = partialIndex === 0 ? 0.075 : 0.012;
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.linearRampToValueAtTime(peak, start + 0.012);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.48);
+          oscillator.connect(gain);
+          gain.connect(audioContext.destination);
+          oscillator.start(start);
+          oscillator.stop(start + 0.50);
+        });
       });
     } catch (e) {}
   }
@@ -379,7 +391,7 @@ sound_html = """
   });
 })();
 </script>
-""".replace("__TRIGGER__", str(sound_trigger)).replace("__ACTIVE__", str(any_signal_active).lower())
+""".replace("__TRIGGER__", str(sound_trigger)).replace("__ACTIVE__", str(any_signal_active).lower()).replace("__ALERT_TYPE__", last_alert_type)
 components.html(sound_html, height=48)
 st.caption("Keep this dashboard open for alarms. Sound may require browser permission; alarms trigger once when a group first qualifies, not on every refresh.")
 
