@@ -1,4 +1,5 @@
 import time
+import json
 from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 
@@ -10,6 +11,7 @@ IST = ZoneInfo("Asia/Kolkata")
 NIFTY200_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv"
 MARKET_OPEN_MINUTES = 9 * 60 + 15
 MARKET_CLOSE_MINUTES = 15 * 60 + 30
+WATCHLIST_FILE = "watchlist.json"
 
 st.set_page_config(page_title="NIFTY 200 Reversal Scanner", page_icon="📈", layout="wide")
 
@@ -32,6 +34,36 @@ with st.sidebar:
                                    format_func=lambda x: "Off" if x == 0 else f"{x} seconds")
     batch_size = st.select_slider("Symbols per data batch", options=[10, 20, 25, 40, 50], value=20)
     scan_button = st.button("🔄 Scan NIFTY 200 now", type="primary", use_container_width=True)
+    st.divider()
+    st.header("My NSE stocks")
+    with st.form("add_nse_stock_form", clear_on_submit=True):
+        stock_entry = st.text_input("Add NSE symbol(s)", placeholder="ICICIBANK, HINDUNILVR")
+        add_stock = st.form_submit_button("➕ Add stock", use_container_width=True)
+    if add_stock and stock_entry.strip():
+        current_watchlist = st.session_state.get("custom_watchlist", [])
+        added = []
+        for item in stock_entry.replace("\\n", ",").replace(";", ",").split(","):
+            symbol = item.strip().upper().replace(".NS", "")
+            if symbol and symbol.replace("-", "").replace("&", "").isalnum() and symbol not in current_watchlist:
+                current_watchlist.append(symbol)
+                added.append(symbol)
+        st.session_state.custom_watchlist = current_watchlist
+        with open(WATCHLIST_FILE, "w", encoding="utf-8") as file:
+            json.dump(current_watchlist, file, indent=2)
+        if added:
+            st.success("Added: " + ", ".join(added))
+        else:
+            st.info("No new valid symbols were added.")
+    watchlist_now = st.session_state.get("custom_watchlist", [])
+    if watchlist_now:
+        st.caption("Saved stocks: " + ", ".join(watchlist_now))
+        remove_symbol = st.selectbox("Remove a saved stock", ["—"] + watchlist_now, key="remove_watchlist_symbol")
+        if st.button("Remove selected stock", use_container_width=True, disabled=remove_symbol == "—"):
+            watchlist_now = [s for s in watchlist_now if s != remove_symbol]
+            st.session_state.custom_watchlist = watchlist_now
+            with open(WATCHLIST_FILE, "w", encoding="utf-8") as file:
+                json.dump(watchlist_now, file, indent=2)
+            st.rerun()
     st.divider()
     st.markdown("**Data source:** Yahoo Finance via yfinance")
     st.markdown("**Market:** NSE · India (IST)")
@@ -209,12 +241,24 @@ except Exception as exc:
     st.info("Check your internet connection. The list is fetched from the official Nifty Indices constituent CSV.")
     st.stop()
 
-st.caption(f"Universe: {len(constituents)} NIFTY 200 constituents · Last app check: {datetime.now(IST).strftime('%d %b %Y, %H:%M:%S IST')}")
+custom_symbols = st.session_state.get("custom_watchlist", [])
+if custom_symbols:
+    extra = pd.DataFrame([{"Symbol": s, "Company": "My watchlist", "Ticker": s + ".NS"} for s in custom_symbols if s + ".NS" not in set(constituents["Ticker"])])
+    constituents = pd.concat([constituents, extra], ignore_index=True).drop_duplicates("Ticker").reset_index(drop=True)
+
+st.caption(f"Universe: {len(constituents)} stocks including {len(custom_symbols)} saved additions · Last app check: {datetime.now(IST).strftime('%d %b %Y, %H:%M:%S IST')}")
 st.info(
     "The scanner uses the latest available 5-minute Yahoo Finance candles. "
     "The 1-hour bars are constructed from today's 5-minute candles, aligned to the NSE 09:15 session open. "
     "A signal appears only when all three stages are true."
 )
+
+if "custom_watchlist" not in st.session_state:
+    try:
+        with open(WATCHLIST_FILE, "r", encoding="utf-8") as file:
+            st.session_state.custom_watchlist = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        st.session_state.custom_watchlist = []
 
 if "scan_results" not in st.session_state:
     st.session_state.scan_results = []
@@ -230,6 +274,7 @@ if scan_button or rescan_button or st.session_state.scan_time is None:
         company_map = dict(zip(constituents["Ticker"], constituents.get("Company", constituents["Symbol"])))
         symbol_map = dict(zip(constituents["Ticker"], constituents["Symbol"]))
         found = []
+        market_rows = []
         errors = 0
         for ticker, frame in downloaded.items():
             if frame.empty:
@@ -238,6 +283,19 @@ if scan_button or rescan_button or st.session_state.scan_time is None:
             row = analyze_symbol(ticker, symbol_map[ticker], company_map[ticker], frame)
             if row:
                 found.append(row)
+            if ticker in [s + ".NS" for s in custom_symbols]:
+                today_frame = frame[frame.index.date == datetime.now(IST).date()]
+                all_dates = sorted(set(frame.index.date))
+                previous_frame = frame[frame.index.date == all_dates[-2]] if len(all_dates) >= 2 else pd.DataFrame()
+                if not today_frame.empty:
+                    last_price = float(today_frame["Close"].iloc[-1])
+                    previous_close = float(previous_frame["Close"].iloc[-1]) if not previous_frame.empty else float("nan")
+                    change = last_price - previous_close if pd.notna(previous_close) else float("nan")
+                    change_pct = (change / previous_close * 100) if pd.notna(previous_close) and previous_close else float("nan")
+                    market_rows.append({"Symbol": symbol_map[ticker], "Open": float(today_frame["Open"].iloc[0]), "High": float(today_frame["High"].max()), "Low": float(today_frame["Low"].min()), "Last Price": last_price, "Previous Close": previous_close, "Change": change, "Change %": change_pct, "Volume": int(today_frame["Volume"].sum()), "Last Updated (IST)": today_frame.index[-1].strftime("%H:%M:%S")})
+                else:
+                    market_rows.append({"Symbol": symbol_map[ticker], "Open": None, "High": None, "Low": None, "Last Price": None, "Previous Close": None, "Change": None, "Change %": None, "Volume": None, "Last Updated (IST)": "No today's data"})
+        st.session_state.market_rows = market_rows
         st.session_state.scan_results = found
         st.session_state.scan_time = datetime.now(IST)
         st.session_state.scan_errors = errors
@@ -248,6 +306,20 @@ col1, col2, col3 = st.columns(3)
 col1.metric("Qualified signals", len(results))
 col2.metric("Stocks in universe", len(constituents))
 col3.metric("Symbols with missing data", st.session_state.get("scan_errors", 0))
+if custom_symbols:
+    st.subheader("My NSE stocks — live snapshot")
+    st.caption("OHLC and last price are calculated from the latest available 5-minute Yahoo Finance candles for today's NSE session.")
+    saved_market = st.session_state.get("market_rows", [])
+    if saved_market:
+        market_df = pd.DataFrame(saved_market)
+        st.dataframe(market_df, use_container_width=True, hide_index=True, column_config={
+            "Open": st.column_config.NumberColumn(format="₹%.2f"), "High": st.column_config.NumberColumn(format="₹%.2f"),
+            "Low": st.column_config.NumberColumn(format="₹%.2f"), "Last Price": st.column_config.NumberColumn(format="₹%.2f"),
+            "Previous Close": st.column_config.NumberColumn(format="₹%.2f"), "Change": st.column_config.NumberColumn(format="₹%.2f"),
+            "Change %": st.column_config.NumberColumn(format="%.2f%%")})
+    else:
+        st.info("Run a scan to load prices for your saved NSE stocks.")
+
 if scan_time:
     st.caption(f"Last completed scan: {scan_time.strftime('%d %b %Y, %H:%M:%S IST')}")
 
