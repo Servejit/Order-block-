@@ -203,7 +203,10 @@ if "scan_results" not in st.session_state:
 if "scan_time" not in st.session_state:
     st.session_state.scan_time = None
 
-if scan_button or st.session_state.scan_time is None:
+# Main-page rescan control, visible without opening the sidebar.
+rescan_button = st.button("🔄 Rescan NIFTY 200", type="primary", use_container_width=True)
+
+if scan_button or rescan_button or st.session_state.scan_time is None:
     with st.spinner("Scanning NIFTY 200. This can take several minutes on a free data feed…"):
         downloaded = download_batch(constituents["Ticker"].tolist())
         company_map = dict(zip(constituents["Ticker"], constituents.get("Company", constituents["Symbol"])))
