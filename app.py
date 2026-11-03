@@ -104,63 +104,81 @@ def fetch_one(ticker):
     return normalize_intraday(raw)
 
 def analyze_symbol(ticker, symbol, company, frame):
+    """Return a scored candidate even when only some scan conditions match."""
     if frame.empty:
         return None
+
     today = datetime.now(IST).date()
-    days = frame[frame.index.date <= today]
-    dates = sorted(set(days.index.date))
-    if len(dates) < 2:
-        return None
-    previous_day = dates[-2]
-    prev_day_data = frame[frame.index.date == previous_day]
-    today_data = frame[frame.index.date == today]
-    if prev_day_data.empty or today_data.empty:
+    today_data = frame[frame.index.date == today].copy()
+    if today_data.empty:
         return None
 
-    prev_day_low = float(prev_day_data["Low"].min())
-    today_low = float(today_data["Low"].min())
+    dates = sorted(set(frame.index.date))
+    previous_day = dates[-2] if len(dates) >= 2 else None
+    prev_day_data = frame[frame.index.date == previous_day] if previous_day else pd.DataFrame()
+
     current_price = float(today_data["Close"].iloc[-1])
-    if not (today_low < prev_day_low and current_price > prev_day_low):
-        return None
+    today_low = float(today_data["Low"].min())
+    prev_day_low = float(prev_day_data["Low"].min()) if not prev_day_data.empty else float("nan")
+    daily_ok = bool(not prev_day_data.empty and today_low < prev_day_low and current_price > prev_day_low)
 
     hourly = today_hourly_bars(frame)
-    if len(hourly) < 2:
-        return None
-    current_hour = hourly.iloc[-1]
-    previous_hour = hourly.iloc[-2]
-    current_hour_low = float(current_hour["Low"])
-    current_hour_high = float(current_hour["High"])
-    previous_hour_low = float(previous_hour["Low"])
-    if not (current_hour_low < previous_hour_low and current_price > previous_hour_low):
-        return None
+    hourly_ok = False
+    current_hour_low = float("nan")
+    current_hour_high = float("nan")
+    previous_hour_low = float("nan")
+    cross_found = False
+    reclaim_time = "Not found"
+    live_above_previous_hour_low = False
+    last5 = today_data.iloc[-1]
 
-    # Relaxed 5-minute trigger: accept an upward reclaim anywhere in the current hour.
-    current_hour_start = current_hour["Start"]
-    hour_5m = today_data[today_data.index >= current_hour_start].copy()
-    if len(hour_5m) < 2:
-        return None
+    if len(hourly) >= 2:
+        current_hour = hourly.iloc[-1]
+        previous_hour = hourly.iloc[-2]
+        current_hour_low = float(current_hour["Low"])
+        current_hour_high = float(current_hour["High"])
+        previous_hour_low = float(previous_hour["Low"])
+        hourly_ok = bool(current_hour_low < previous_hour_low and current_price > previous_hour_low)
+        live_above_previous_hour_low = bool(float(last5["Close"]) > previous_hour_low)
 
-    level = current_hour_low
-    cross_positions = []
-    for i in range(1, len(hour_5m)):
-        if float(hour_5m["Close"].iloc[i - 1]) <= level and float(hour_5m["Close"].iloc[i]) > level:
-            cross_positions.append(i)
-    if not cross_positions:
-        return None
+        current_hour_start = current_hour["Start"]
+        hour_5m = today_data[today_data.index >= current_hour_start].copy()
+        if len(hour_5m) >= 2:
+            for i in range(1, len(hour_5m)):
+                if (float(hour_5m["Close"].iloc[i - 1]) <= current_hour_low
+                        and float(hour_5m["Close"].iloc[i]) > current_hour_low):
+                    cross_found = True
+                    reclaim_time = hour_5m.index[i].strftime("%H:%M")
 
-    cross_i = cross_positions[-1]
-    last5 = hour_5m.iloc[-1]
-    live_price = float(last5["Close"])
-    if live_price <= previous_hour_low:
-        return None
+    # Progressive score: full daily/hourly/5m setup ranks highest.
+    score = (3 if daily_ok else 0) + (2 if hourly_ok else 0) + (2 if cross_found else 0) + (1 if live_above_previous_hour_low else 0)
+    if daily_ok and hourly_ok and cross_found and live_above_previous_hour_low:
+        match_level = "FULL MATCH"
+    elif score >= 5:
+        match_level = "NEAR MATCH"
+    elif score >= 3:
+        match_level = "PARTIAL MATCH"
+    else:
+        match_level = "WATCHLIST"
 
     return {
-        "Symbol": symbol, "Company": company, "Price": current_price,
-        "Prev day low": prev_day_low, "Today low": today_low,
-        "Prev 1H low": previous_hour_low, "Current 1H low": current_hour_low,
-        "Current 1H high": current_hour_high, "5m close": float(last5["Close"]),
-        "5m reclaim candle": hour_5m.index[cross_i].strftime("%H:%M"),
-        "Last update (IST)": today_5m.index[-1].strftime("%H:%M:%S")
+        "Symbol": symbol,
+        "Company": company,
+        "Price": current_price,
+        "Match level": match_level,
+        "Score": score,
+        "Daily condition": "Yes" if daily_ok else "No",
+        "1H condition": "Yes" if hourly_ok else "No",
+        "5m cross": "Yes" if cross_found else "No",
+        "Price above previous 1H low": "Yes" if live_above_previous_hour_low else "No",
+        "Prev day low": prev_day_low,
+        "Today low": today_low,
+        "Prev 1H low": previous_hour_low,
+        "Current 1H low": current_hour_low,
+        "Current 1H high": current_hour_high,
+        "5m close": float(last5["Close"]),
+        "5m reclaim candle": reclaim_time,
+        "Last update (IST)": today_data.index[-1].strftime("%H:%M:%S")
     }
 
 def download_batch(tickers):
@@ -233,12 +251,16 @@ col3.metric("Symbols with missing data", st.session_state.get("scan_errors", 0))
 if scan_time:
     st.caption(f"Last completed scan: {scan_time.strftime('%d %b %Y, %H:%M:%S IST')}")
 
-st.subheader("Stocks matching all conditions")
+st.subheader("NIFTY 200 results — ranked by matching conditions")
+st.caption("The scanner now shows full matches first, followed by near matches, partial matches and watchlist candidates. A relaxed candidate is not a full signal.")
 if results:
     output = pd.DataFrame(results)
-    display_cols = ["Symbol", "Price", "Prev day low", "Today low", "Prev 1H low",
-                    "Current 1H low", "Current 1H high", "5m close",
-                    "5m reclaim candle", "Last update (IST)"]
+    output = output.sort_values(["Score", "Price"], ascending=[False, False]).reset_index(drop=True)
+    display_cols = ["Symbol", "Company", "Price", "Match level", "Score",
+                    "Daily condition", "1H condition", "5m cross",
+                    "Price above previous 1H low", "Prev day low", "Today low",
+                    "Prev 1H low", "Current 1H low", "Current 1H high",
+                    "5m close", "5m reclaim candle", "Last update (IST)"]
     st.dataframe(output[display_cols], use_container_width=True, hide_index=True,
                  column_config={
                      "Price": st.column_config.NumberColumn(format="₹%.2f"),
@@ -253,14 +275,16 @@ if results:
     st.download_button("⬇️ Download signals CSV", csv, "nifty200_reversal_signals.csv", "text/csv")
 
 else:
-    st.warning("No stocks currently match all three stages. This is normal; the scanner does not relax your conditions.")
+    st.warning("No intraday data was received for today's session. Check the data connection or try again during/after NSE market hours.")
 
 with st.expander("Exact scan rules"):
     st.markdown("""
     1. **Daily sweep and reclaim:** today's low < previous trading day's low, and latest price > previous day's low.
     2. **Hourly sweep and reclaim:** current session-hour low < previous completed session-hour low, and latest price > that previous hour's low.
-    3. **5-minute reclaim (relaxed):** any 5-minute candle in the current session-hour crosses from a close at/below the current 1-hour low to a close above it.
+    3. **5-minute reclaim:** any 5-minute candle in the current session-hour crosses from a close at/below the current 1-hour low to a close above it.
     4. **Live-price confirmation:** latest 5-minute price must remain above the previous completed 1-hour candle low.
+    
+    Results are ranked by these conditions. Full matches appear first; if none exist, the app still displays available stocks as near matches, partial matches or watchlist candidates. These fallback rows are not full trading signals.
     
     The app builds session-hour candles from 5-minute data, starting at 09:15 IST. The currently forming hour is included.
     """)
