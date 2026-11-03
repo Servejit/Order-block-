@@ -135,7 +135,6 @@ def analyze_symbol(ticker, symbol, company, frame):
         return None
 
     # Relaxed 5-minute trigger: accept an upward reclaim anywhere in the current hour.
-    # A following red candle supplies the target when present, but is not mandatory.
     current_hour_start = current_hour["Start"]
     hour_5m = today_data[today_data.index >= current_hour_start].copy()
     if len(hour_5m) < 2:
@@ -150,27 +149,17 @@ def analyze_symbol(ticker, symbol, company, frame):
         return None
 
     cross_i = cross_positions[-1]
-    following_red = None
-    if cross_i + 1 < len(hour_5m):
-        next_candle = hour_5m.iloc[cross_i + 1]
-        if float(next_candle["Close"]) < float(next_candle["Open"]):
-            following_red = next_candle
-
     last5 = hour_5m.iloc[-1]
     live_price = float(last5["Close"])
     if live_price <= previous_hour_low:
         return None
 
-    target = float(following_red["Low"]) if following_red is not None else None
-    target_note = "Low of next red 5m candle after reclaim" if target is not None else "No following red 5m candle yet; signal retained"
     return {
         "Symbol": symbol, "Company": company, "Price": current_price,
         "Prev day low": prev_day_low, "Today low": today_low,
         "Prev 1H low": previous_hour_low, "Current 1H low": current_hour_low,
         "Current 1H high": current_hour_high, "5m close": float(last5["Close"]),
         "5m reclaim candle": hour_5m.index[cross_i].strftime("%H:%M"),
-        "Following red 5m candle": "Yes" if following_red is not None else "Not yet",
-        "Target (following red 5m low)": target, "Target basis": target_note,
         "Last update (IST)": today_5m.index[-1].strftime("%H:%M:%S")
     }
 
@@ -245,8 +234,8 @@ st.subheader("Stocks matching all conditions")
 if results:
     output = pd.DataFrame(results)
     display_cols = ["Symbol", "Price", "Prev day low", "Today low", "Prev 1H low",
-                    "Current 1H low", "Current 1H high", "5m close", "5m reclaim candle", "Following red 5m candle",
-                    "Target (following red 5m low)", "Last update (IST)"]
+                    "Current 1H low", "Current 1H high", "5m close",
+                    "5m reclaim candle", "Last update (IST)"]
     st.dataframe(output[display_cols], use_container_width=True, hide_index=True,
                  column_config={
                      "Price": st.column_config.NumberColumn(format="₹%.2f"),
@@ -255,17 +244,11 @@ if results:
                      "Prev 1H low": st.column_config.NumberColumn(format="₹%.2f"),
                      "Current 1H low": st.column_config.NumberColumn(format="₹%.2f"),
                      "Current 1H high": st.column_config.NumberColumn(format="₹%.2f"),
-                     "5m close": st.column_config.NumberColumn(format="₹%.2f"),
-                     "Target (following red 5m low)": st.column_config.NumberColumn(format="₹%.2f")
+                     "5m close": st.column_config.NumberColumn(format="₹%.2f")
                  })
     csv = output.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Download signals CSV", csv, "nifty200_reversal_signals.csv", "text/csv")
-    st.subheader("Target-level interpretation")
-    st.caption(
-        "Target is the lowest Low among today's bearish (red) 1-hour candles. "
-        "This is displayed as the requested reference level, not assumed to be a profitable upside target. "
-        "If it is below the entry/current price, it is a downside reference and should not be treated as a long profit target."
-    )
+
 else:
     st.warning("No stocks currently match all three stages. This is normal; the scanner does not relax your conditions.")
 
@@ -275,7 +258,6 @@ with st.expander("Exact scan rules"):
     2. **Hourly sweep and reclaim:** current session-hour low < previous completed session-hour low, and latest price > that previous hour's low.
     3. **5-minute reclaim (relaxed):** any 5-minute candle in the current session-hour crosses from a close at/below the current 1-hour low to a close above it.
     4. **Live-price confirmation:** latest 5-minute price must remain above the previous completed 1-hour candle low.
-    5. **Optional target:** if the immediately following 5-minute candle is red (Close < Open), its Low is shown. If not, the stock is still listed and target remains blank.
     
     The app builds session-hour candles from 5-minute data, starting at 09:15 IST. The currently forming hour is included.
     """)
