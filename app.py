@@ -25,6 +25,13 @@ div[data-testid="stDataFrame"] {border: 1px solid rgba(128,128,128,.2); border-r
 </style>
 """, unsafe_allow_html=True)
 
+if "custom_watchlist" not in st.session_state:
+    try:
+        with open(WATCHLIST_FILE, "r", encoding="utf-8") as file:
+            st.session_state.custom_watchlist = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        st.session_state.custom_watchlist = []
+
 st.title("📈 NIFTY 200 — Intraday Reversal Scanner")
 st.caption("Daily downside sweep → 1-hour downside sweep → 5-minute reclaim trigger")
 
@@ -240,13 +247,6 @@ except Exception as exc:
     st.error(f"Could not load the NIFTY 200 constituent list: {exc}")
     st.info("Check your internet connection. The list is fetched from the official Nifty Indices constituent CSV.")
     st.stop()
-
-if "custom_watchlist" not in st.session_state:
-    try:
-        with open(WATCHLIST_FILE, "r", encoding="utf-8") as file:
-            st.session_state.custom_watchlist = json.load(file)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        st.session_state.custom_watchlist = []
 
 custom_symbols = st.session_state.get("custom_watchlist", [])
 if custom_symbols:
