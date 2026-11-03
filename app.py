@@ -67,10 +67,11 @@ st.caption("Your personal NSE watchlist with frequent price updates and movement
 with st.sidebar:
     st.header("Manage portfolio")
     with st.form("add_stock_form", clear_on_submit=True):
-        stock_input = st.text_input(
-            "Add NSE symbol(s)",
-            placeholder="ICICIBANK, HINDUNILVR, RELIANCE",
-            help="Enter NSE trading symbols separated by commas or new lines.",
+        stock_input = st.text_area(
+            "Add multiple NSE stocks",
+            placeholder="EICHERMOT, HINDUNILVR, ICICIBANK",
+            help="Paste any number of NSE symbols. Separate them with commas, semicolons, spaces, or new lines. Example: EICHERMOT, HINDUNILVR, ICICIBANK.",
+            height=90,
         )
         add_clicked = st.form_submit_button(
             "＋ Add stock",
@@ -81,7 +82,12 @@ with st.sidebar:
     if add_clicked:
         additions = []
         existing = st.session_state.portfolio_symbols.copy()
-        for raw in stock_input.replace(";", ",").replace("\n", ",").split(","):
+        normalized_input = stock_input.replace(";", ",").replace("\n", ",")
+        # Accept comma/semicolon/newline-separated symbols, and whitespace-separated lists.
+        raw_symbols = []
+        for chunk in normalized_input.split(","):
+            raw_symbols.extend(chunk.split())
+        for raw in raw_symbols:
             symbol = raw.strip().upper().replace(".NS", "")
             if symbol and symbol.replace("-", "").replace("&", "").isalnum():
                 if symbol not in existing:
@@ -111,6 +117,17 @@ with st.sidebar:
             updated = [s for s in current_symbols if s != remove_choice]
             st.session_state.portfolio_symbols = updated
             save_portfolio(updated)
+            st.rerun()
+
+        if st.button(
+            "🗑 Remove ALL stocks",
+            use_container_width=True,
+            type="secondary",
+        ):
+            st.session_state.portfolio_symbols = []
+            save_portfolio([])
+            st.session_state.previous_live_prices = {}
+            st.session_state.previous_group_signals = {"BUY": False, "SELL": False}
             st.rerun()
 
     st.divider()
