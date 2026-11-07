@@ -133,6 +133,58 @@ def render_stock_view():
     buy = float(df["BuyPressure"].sum())
     sell = float(df["SellPressure"].sum())
     net = buy - sell
+
+    # Rule-based trade decision using only the selected OHLCV timeframe.
+    # This is an educational signal, not a guaranteed prediction or trade instruction.
+    df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
+    previous_close = df["Close"].shift(1)
+    true_range = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - previous_close).abs(),
+        (df["Low"] - previous_close).abs(),
+    ], axis=1).max(axis=1)
+    df["ATR14"] = true_range.rolling(14, min_periods=2).mean()
+    last = df.iloc[-1]
+    atr = float(last["ATR14"]) if pd.notna(last["ATR14"]) and last["ATR14"] > 0 else float(last["High"] - last["Low"])
+    avg_volume = float(df["Volume"].rolling(20, min_periods=2).mean().iloc[-1])
+    volume_confirmed = bool(last["Volume"] >= avg_volume) if avg_volume > 0 else False
+    bullish = bool(last["Close"] > last["EMA20"] and last["NetPressure"] > 0 and volume_confirmed)
+    bearish = bool(last["Close"] < last["EMA20"] and last["NetPressure"] < 0 and volume_confirmed)
+
+    if bullish and atr > 0:
+        decision = "BUY"
+        entry_price = float(last["Close"])
+        stop_price = entry_price - (1.5 * atr)
+        target_price = entry_price + (2.0 * (entry_price - stop_price))
+        decision_reason = "Price is above EMA20, estimated candle pressure is positive, and volume confirms."
+    elif bearish and atr > 0:
+        decision = "SELL"
+        entry_price = float(last["Close"])
+        stop_price = entry_price + (1.5 * atr)
+        target_price = entry_price - (2.0 * (stop_price - entry_price))
+        decision_reason = "Price is below EMA20, estimated candle pressure is negative, and volume confirms."
+    else:
+        decision = "WAIT"
+        entry_price = float(last["Close"])
+        stop_price = None
+        target_price = None
+        decision_reason = "The trend, estimated pressure and volume conditions do not all agree. Wait for confirmation."
+
+    st.subheader("Trade Decision")
+    st.caption("Rule-based signal from the selected timeframe. Prices are indicative levels calculated from the latest candle and ATR.")
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Decision", decision)
+    d2.metric("Indicative entry", f"₹{entry_price:,.2f}")
+    d3.metric("Target / sell price" if decision == "BUY" else "Target / cover price" if decision == "SELL" else "Target price", f"₹{target_price:,.2f}" if target_price is not None else "—")
+    d4.metric("Stop loss", f"₹{stop_price:,.2f}" if stop_price is not None else "—")
+    st.write(decision_reason)
+    if decision == "BUY":
+        st.success(f"BUY setup: entry near ₹{entry_price:,.2f} · target ₹{target_price:,.2f} · stop loss ₹{stop_price:,.2f}")
+    elif decision == "SELL":
+        st.warning(f"SELL setup: entry near ₹{entry_price:,.2f} · target ₹{target_price:,.2f} · stop loss ₹{stop_price:,.2f}")
+    else:
+        st.info("No trade setup currently. Avoid treating the indicative entry as a live order.")
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Last price", f"₹{latest['Close']:,.2f}", f"{change:+.2f} ({pct:+.2f}%)")
     c2.metric("Candle volume", fmt_num(latest["Volume"]))
