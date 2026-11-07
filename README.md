@@ -12,6 +12,19 @@ A Streamlit scanner for NIFTY 200 stocks using a daily sweep/reclaim, 1-hour swe
 
 Hourly candles are assembled from 5-minute candles and aligned to the NSE session open (09:15 IST).
 
+## Order Flow dashboard
+
+A separate **Order Flow** page is available from the Streamlit sidebar. It adds:
+- Stock price and volume chart with timeframe selection.
+- Estimated buying/selling pressure derived from candle volume.
+- Approximate volume profile and point of control.
+- High-volume candidate demand/supply zones.
+- Starter sector baskets for quick relative-strength snapshots.
+
+The original scanner and portfolio app in `app.py` are kept separate and are not replaced.
+
+**Important data limitation:** Yahoo Finance does not provide genuine exchange Level-2 bid/ask depth or buyer/seller-initiated trade flags. Order-flow pressure and zones on this page are estimates from OHLCV candles, not actual order-book data. The Market Depth panel therefore does not invent bid/ask quantities. A supported broker/exchange market-data feed is required for true depth.
+
 ## Run locally
 
 ```bash
