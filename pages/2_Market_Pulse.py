@@ -82,28 +82,30 @@ with tab_market:
             cols[i % 3].metric(name, "Unavailable", "Yahoo data unavailable")
     st.divider()
     st.subheader("Market breadth snapshot")
-    if st.button("Refresh market breadth", key="breadth"):
+    if st.button("Load / refresh market breadth", key="breadth"):
         history.clear()
-    breadth = get_snapshot(BREADTH_SYMBOLS, "market breadth")
-    if not breadth.empty:
-        adv = int((breadth["Change %"] > 0).sum())
-        dec = int((breadth["Change %"] < 0).sum())
-        unchanged = int((breadth["Change %"] == 0).sum())
-        a, b, c, d = st.columns(4)
-        a.metric("Advancers", adv)
-        b.metric("Decliners", dec)
-        c.metric("Unchanged", unchanged)
-        d.metric("Advance / decline", f"{adv / dec:.2f}" if dec else "∞")
-        fig = go.Figure(go.Bar(x=breadth.sort_values("Change %")["Symbol"],
-                               y=breadth.sort_values("Change %")["Change %"],
-                               marker_color=["#16a34a" if x >= 0 else "#dc2626" for x in breadth.sort_values("Change %")["Change %"]]))
-        fig.update_layout(title="Constituent change snapshot (watchlist basket)", yaxis_title="Change %", height=430)
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(breadth.sort_values("Change %", ascending=False).style.format(
-            {"Last": "₹{:,.2f}", "Change %": "{:+.2f}%", "Volume": "{:,.0f}"}),
-            use_container_width=True, hide_index=True)
+        breadth = get_snapshot(BREADTH_SYMBOLS, "market breadth")
+        if not breadth.empty:
+            adv = int((breadth["Change %"] > 0).sum())
+            dec = int((breadth["Change %"] < 0).sum())
+            unchanged = int((breadth["Change %"] == 0).sum())
+            a, b, c, d = st.columns(4)
+            a.metric("Advancers", adv)
+            b.metric("Decliners", dec)
+            c.metric("Unchanged", unchanged)
+            d.metric("Advance / decline", f"{adv / dec:.2f}" if dec else "∞")
+            ordered = breadth.sort_values("Change %")
+            fig = go.Figure(go.Bar(x=ordered["Symbol"], y=ordered["Change %"],
+                                   marker_color=["#16a34a" if x >= 0 else "#dc2626" for x in ordered["Change %"]]))
+            fig.update_layout(title="Constituent change snapshot (watchlist basket)", yaxis_title="Change %", height=430)
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(breadth.sort_values("Change %", ascending=False).style.format(
+                {"Last": "₹{:,.2f}", "Change %": "{:+.2f}%", "Volume": "{:,.0f}"}),
+                use_container_width=True, hide_index=True)
+        else:
+            st.warning("Market breadth could not be loaded. Retry later; Yahoo Finance may throttle requests.")
     else:
-        st.warning("Market breadth could not be loaded. Retry later; Yahoo Finance may throttle requests.")
+        st.caption("Tap **Load / refresh market breadth** when you want the constituent snapshot. It is not fetched automatically.");
 
 with tab_sector:
     st.subheader("Sector money-flow approximation")
