@@ -1,41 +1,42 @@
-# NIFTY 200 Intraday Reversal Scanner
+# NSE Intraday Reversal Scanner & Market Dashboards
 
-A Streamlit scanner for NIFTY 200 stocks using a daily sweep/reclaim, 1-hour sweep/reclaim, and 5-minute reclaim trigger.
+A Streamlit application for NSE market research. The original scanner and portfolio app remain in `app.py`; additional dashboards are available in the Streamlit sidebar.
 
-## Signal rules
+## Pages
 
-1. Today's low is below the previous trading day's low, while the latest price is back above the previous day's low.
-2. The currently forming session-hour candle's low is below the previous completed session-hour candle's low, while price is above that previous hour's low.
-3. The latest 5-minute candle closes above the current session-hour low after the previous 5-minute close was at or below it.
-4. The latest 5-minute candle's high must remain below the current session-hour high.
-5. The target reference is the lowest low among today's bearish (red) 1-hour candles.
+### 1. Original app — `app.py`
+The existing NIFTY 200 intraday reversal scanner and portfolio/watchlist workflow are preserved.
 
-Hourly candles are assembled from 5-minute candles and aligned to the NSE session open (09:15 IST).
-
-## Order Flow dashboard
-
-A separate **Order Flow** page is available from the Streamlit sidebar. It adds:
-- Stock price and volume chart with timeframe selection.
-- Estimated buying/selling pressure derived from candle volume.
+### 2. Order Flow — `pages/1_Order_Flow.py`
+- Stock candlestick and volume charts with timeframe selection.
+- Estimated buying/selling pressure from candle volume.
 - Approximate volume profile and point of control.
 - High-volume candidate demand/supply zones.
-- Starter sector baskets for quick relative-strength snapshots.
+- Rule-based BUY / SELL / WAIT decision with indicative entry, target and stop-loss levels.
+- Sector basket snapshots.
+- Market-depth section clearly explains the absence of genuine Level-2 data.
 
-The original scanner and portfolio app in `app.py` are kept separate and are not replaced.
+### 3. Market Pulse — `pages/2_Market_Pulse.py`
+- NIFTY 50, BANK NIFTY and selected sector index snapshots.
+- Advancing/declining watchlist breadth.
+- Sector basket performance and approximate money-flow view.
+- Daily RSI, EMA20/EMA50 and MACD watchlist screener.
 
-**Important data limitation:** Yahoo Finance does not provide genuine exchange Level-2 bid/ask depth or buyer/seller-initiated trade flags. Order-flow pressure and zones on this page are estimates from OHLCV candles, not actual order-book data. The Market Depth panel therefore does not invent bid/ask quantities. A supported broker/exchange market-data feed is required for true depth.
+## Data and accuracy limitations
 
-## Run locally
+This is an independent implementation inspired by publicly described market-dashboard features. It does not copy Tredye's private source code, backend, data pipeline, or proprietary calculations.
+
+The free version uses Yahoo Finance through `yfinance`. Data can be delayed, incomplete, throttled, sampled or unavailable. Yahoo Finance does not provide genuine exchange Level-2 bid/ask depth, buyer/seller-initiated trade flags, full options-chain/OI walls, or a guaranteed real-time NSE feed. The dashboards therefore label candle-derived pressure, volume profile, sector flow and zones as estimates and do not fabricate missing order-book or options data.
+
+Sector and breadth baskets are representative watchlists, not official exhaustive NSE constituent lists. The BUY / SELL / WAIT panel is a simple educational rule set, not a recommendation or guaranteed prediction. Confirm all prices and signals with your broker before making decisions.
+
+No broker orders are placed by this application.
+
+## Run locally or in GitHub Codespaces
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Data limitations
-
-The app uses Yahoo Finance through yfinance and the official Nifty Indices constituent CSV. Yahoo Finance is not an official NSE real-time feed; intraday prices may be delayed, incomplete, throttled, or unavailable. Confirm all values on your broker's chart. This app is for research and paper-trading workflows only and does not place orders.
-
-## GitHub Codespaces
-
-Create a Codespace, then run the commands above in its terminal. Forward port 8501 and open the forwarded URL.
+Forward port **8501** in Codespaces and open the forwarded URL. Use the sidebar to switch between the original app, Order Flow and Market Pulse pages.
